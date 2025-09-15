@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>IrritateMe - The Day After Calculator</title>
+    <meta name="description" content="The most irritating way to find out what day it will be after X days">
+
+    <style>
+        /* Design System Variables */
+        :root {
+            --primary: 220 70% 50%;
+            --primary-foreground: 0 0% 100%;
+            --secondary: 220 14.3% 95.9%;
+            --foreground: 220 8.9% 46.1%;
+            --muted: 220 14.3% 95.9%;
+            --muted-foreground: 220 8.9% 46.1%;
+            --destructive: 0 84.2% 60.2%;
+            --destructive-foreground: 210 40% 98%;
+            --border: 220 13% 91%;
+            --radius: 0.5rem;
+            --maze-wall: 220 8.9% 25%;
+            --maze-path: 0 0% 98%;
+            --maze-exit: 142 76% 36%;
+            --progress-bg: 220 14.3% 95.9%;
+            --progress-fill: 220 70% 50%;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: hsl(0 0% 100%);
+            color: hsl(var(--foreground));
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; min-height: 100vh; display:flex; flex-direction:column; justify-content:center; align-items:center; }
+
+        .screen { display: none; width:100%; max-width: 700px; text-align:center; }
+        .screen.active { display:block; }
+
+        h1 { font-size: 2.5rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--destructive))); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .subtitle { font-size: 1.1rem; color: hsl(var(--muted-foreground)); margin-bottom: 1rem; }
+
+        .input-group { margin: 1rem 0; text-align: left; }
+        label { display:block; font-weight:600; margin-bottom:0.5rem; }
+        input[type="number"] { width:100%; padding:0.9rem; font-size:1.05rem; border-radius:var(--radius); border:2px solid hsl(var(--border)); }
+
+        .btn { padding:0.9rem 1.6rem; border-radius:var(--radius); border:none; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); cursor:pointer; font-weight:600; margin:0.4rem; }
+        .btn-destructive { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground)); }
+
+        .error-message { color: hsl(var(--destructive)); margin-top:0.5rem; font-weight:500; }
+
+        /* Loading */
+        .progress-bar { width:100%; height:20px; background: hsl(var(--progress-bg)); border-radius:10px; overflow:hidden; margin:1rem 0; border:2px solid hsl(var(--border)); }
+        .progress-fill { height:100%; width:0%; background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--primary))); transition: width 0.5s ease; }
+
+        /* Maze */
+        .maze-container { margin: 1rem 0; }
+        .maze-canvas { border:3px solid hsl(var(--border)); border-radius: var(--radius); background: hsl(0 0% 98%); max-width:100%; height:auto; }
+
+        .maze-info { background: hsl(var(--muted)); padding: 0.9rem; border-radius:var(--radius); margin: 1rem 0; }
+
+        /* Word Search */
+        .word-search-container { width:100%; height:60vh; border:3px solid hsl(var(--border)); border-radius:var(--radius); overflow:auto; background:hsl(0 0% 100%); position:relative; padding:10px; }
+        .word-grid {
+            display: grid;
+            gap: 1px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            justify-content: start;
+        }
+        .word-cell {
+            width: 20px;
+            height: 20px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            border:1px solid rgba(0,0,0,0.05);
+            user-select:none;
+            background: hsl(0 0% 100%);
+            cursor: pointer;
+        }
+        .word-cell:hover { background: hsl(var(--muted)); }
+        .word-cell.selected { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+        .word-cell.found { background: hsl(220 14% 95%); color: hsl(142 76% 36%); font-weight:700; }
+
+        .word-search-info { position:absolute; top:10px; right:10px; background: rgba(255,255,255,0.98); padding:10px; border-radius:var(--radius); border:2px solid hsl(var(--border)); max-width:240px; text-align:left; }
+
+        .quiz-section { background: hsl(var(--muted)); padding:1rem; border-radius:var(--radius); border:2px solid hsl(var(--primary)); margin-bottom:1rem; }
+        .quiz-question { font-size:1.05rem; font-weight:bold; color: hsl(var(--primary)); margin-bottom:0.6rem; }
+        .quiz-options { display:grid; gap:0.5rem; }
+        .quiz-option { padding:0.6rem 0.9rem; background:hsl(0 0% 100%); border-radius:var(--radius); border:2px solid hsl(var(--border)); cursor:pointer; text-align:left; }
+        .quiz-option.correct { background: hsl(220 14% 95%); border-color: hsl(142 76% 36%); }
+        .quiz-option.wrong { background: rgba(255,0,0,0.06); border-color: hsl(var(--destructive)); }
+
+        .attempts-counter { font-weight:bold; color: hsl(var(--destructive)); margin-top:0.5rem; }
+
+        /* Timer section */
+        #timerSection { display:none; margin: 1rem 0; font-weight:bold; color: hsl(0 84% 60%); }
+
+        /* Checkbox Garden */
+        .checkbox-garden { width:100%; height:60vh; overflow:auto; border:3px solid hsl(var(--border)); border-radius:var(--radius); padding:20px; background: rgba(230,230,230,0.2); }
+        .checkbox-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap:5px; }
+
+        .checkbox-item { width:25px; height:25px; border-radius:3px; border:2px solid hsl(var(--border)); background: hsl(0 0% 100%); cursor:pointer; }
+
+        /* Reveal */
+        .reveal-container { text-align:center; padding:2rem; background: hsl(var(--muted)); border-radius:var(--radius); margin:2rem 0; }
+        .reveal-day { font-size:3rem; font-weight:bold; color: hsl(var(--primary)); margin:1rem 0; }
+        .roast-text { font-size:1.1rem; color: hsl(var(--muted-foreground)); margin:1rem 0; font-style:italic; }
+
+        /* Reset overlay */
+        .reset-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background: rgba(255,0,0,0.9); color: white; display:flex; align-items:center; justify-content:center; font-size:2rem; z-index:1000; }
+
+        /* Confetti */
+        .confetti-container { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; overflow:hidden; z-index:2000; }
+        .confetti {
+            position:absolute;
+            width:10px;
+            height:14px;
+            opacity:0.95;
+            transform-origin:center;
+            animation: fall 3s linear forwards;
+        }
+        @keyframes fall {
+            0% { transform: translateY(-10vh) rotate(0deg); opacity:1; }
+            100% { transform: translateY(110vh) rotate(720deg); opacity:0.9; }
+        }
+
+        /* Utility */
+        .fade-in { animation: fadeIn 0.4s ease-in; }
+        @keyframes fadeIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform:translateY(0); } }
+
+        @media (max-width:768px) {
+            .word-cell { width:15px; height:15px; font-size:10px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sound Toggle -->
+    <div style="position:fixed; top:20px; right:20px; z-index:100;" class="sound-toggle" onclick="toggleSound()" title="Toggle Sound">🔊</div>
+
+    <div class="container">
+        <!-- Entry Screen -->
+        <div id="entryScreen" class="screen active fade-in">
+            <h1>IrritateMe</h1>
+            <p class="subtitle">The lovable, infuriating day-after calculator</p>
+
+            <div class="input-group">
+                <label for="daysInput">Enter number of days (X):</label>
+                <input type="number" id="daysInput" min="0" max="100000" placeholder="e.g., 365">
+                <div id="inputError" class="error-message"></div>
+            </div>
+
+            <button class="btn" onclick="startCalculation()">Predict</button>
+            <p style="margin-top:1rem; color: hsl(var(--muted-foreground)); font-size:0.9rem;">Warning: This will test your patience and dignity</p>
+        </div>
+
+        <!-- Loading Screen -->
+        <div id="loadingScreen" class="screen">
+            <h2>Computing Your Future...</h2>
+            <div class="loading-container" style="max-width:600px;">
+                <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+                <div id="loadingText" class="loading-text" style="padding:0.8rem; margin-bottom:0.6rem;">Initializing irritation protocols...</div>
+                <div style="margin-top: 0.5rem; color: hsl(var(--muted-foreground));"><small>This is not fake loading. We're actually doing... things.</small></div>
+            </div>
+        </div>
+
+        <!-- Maze Puzzle -->
+        <div id="mazeScreen" class="screen">
+            <h2>Stage 1: Navigate the Maze</h2>
+            <p style="margin:1rem 0; color: hsl(var(--muted-foreground));">Use arrow keys or WASD to move. Find the green exit.</p>
+
+            <div class="maze-container">
+                <canvas id="mazeCanvas" class="maze-canvas" width="600" height="400"></canvas>
+            </div>
+
+            <div class="maze-info">
+                <p><strong>Controls:</strong> Arrow Keys, WASD</p>
+                <p><strong>Goal:</strong> Reach the green exit</p>
+                <button class="btn" onclick="showMazeHint()">💡 Hint (1 second only)</button>
+                <span id="hintUsed" style="margin-left:1rem; color: hsl(var(--muted-foreground));"></span>
+            </div>
+        </div>
+
+        <!-- Word Search Puzzle -->
+        <div id="wordSearchScreen" class="screen">
+            <h2>Stage 2: Find the Key Word</h2>
+            <p style="margin:1rem 0; color: hsl(var(--muted-foreground));">Answer the quiz correctly to get the key word, then find it in the grid. You have 3 attempts!</p>
+
+            <div class="quiz-section">
+                <div id="quizQuestion" class="quiz-question"></div>
+                <div id="quizOptions" class="quiz-options"></div>
+                <div id="attemptsCounter" class="attempts-counter">Attempts remaining: 3</div>
+                <div id="quizMessage" style="margin-top:1rem; font-weight:bold;"></div>
+            </div>
+
+            <div id="timerSection">
+                ⏳ You CANNOT solve this in <span id="timerCountdown">120</span> seconds!<br>
+                ⚡ If you do, you’ll unlock an exciting reward…
+            </div>
+
+            <div class="word-search-container" id="wordSearchContainer" style="display:none;">
+                <div id="wordGrid" class="word-grid"></div>
+                <div class="word-search-info">
+                    <h4>Instructions:</h4>
+                    <p>• Drag to select the word: <strong id="targetWord"></strong></p>
+                    <p>• Find it in the grid</p>
+                    <p>• Invalid selections = reset!</p>
+                    <div id="wordMessage" style="margin-top:1rem; font-weight:bold;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Checkbox Garden -->
+        <div id="checkboxScreen" class="screen">
+            <h2>Stage 3: Find the Chosen One</h2>
+            <p style="margin:1rem 0; color: hsl(var(--muted-foreground));">One checkbox among hundreds is the correct one. Choose wisely - wrong choices reset everything!</p>
+
+            <div id="checkboxClue" style="background: hsl(var(--muted)); padding:1rem; border-radius:var(--radius); margin:1rem 0;">
+                <strong>Cryptic Clue:</strong> <span id="clueText"></span>
+            </div>
+
+            <div class="checkbox-garden">
+                <div id="checkboxGrid" class="checkbox-grid"></div>
+            </div>
+        </div>
+
+        <!-- Reveal Screen -->
+        <div id="revealScreen" class="screen">
+            <div class="reveal-container">
+                <h2>🎉 Mission Accomplished!</h2>
+                <p>After <span id="inputDays"></span> days it will be:</p>
+                <div id="resultDay" class="reveal-day"></div>
+                <p id="roastMessage" class="roast-text"></p>
+                <button class="btn" onclick="resetApp()">Try Another X (Refresh)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confetti container -->
+    <div id="confettiContainer" class="confetti-container" style="display:none;"></div>
+
+    <script>
+        // CONFIG
+        const CONFIG = {
+            LOADING_DURATION: 60000, // 60 seconds
+            MAZE_SIZE: { width: 21, height: 15 },
+            WORD_GRID_SIZE: 20,      // reduced to 20 (was 200)
+            CHECKBOX_COUNT: 400,     // reduced for practicality
+            DETERMINISTIC_SEED: null,
+            SOUND_ENABLED: true,
+            WORD_SEARCH_ATTEMPTS: 3
+        };
+
+        // STATE
+        let gameState = {
+            inputDays: 0,
+            currentScreen: 'entry',
+            sessionSeed: null,
+            mazeData: null,
+            playerPos: { x:0, y:0 },
+            quizAttempts: 3,
+            currentQuiz: null,
+            keyWord: null,
+            wordSearchData: null,
+            selectedCells: [],
+            isSelecting: false,
+            selectionStart: null
+        };
+
+        // audio
+        const audioContext = typeof AudioContext !== 'undefined' ? new AudioContext() : null;
+
+        // LOADING DIALOGUES (25)
+        const LOADING_DIALOGUES = [
+            "Analyzing Arpit Bala's top-tier cringe archive…",
+            "Cross-checking Jethalal's electrical warranty receipts…",
+            "Consulting Ranveer Allahbadia's podcast notes…",
+            "Reading Ananya Panday's 'relatable' DM drafts…",
+            "Reviewing Rohit Sharma's net practice schedule…",
+            "Scanning India vs Pakistan meme density…",
+            "Downloading Poonam Pandey's scandal summary…",
+            "Checking Rakhi Sawant's latest drama frequency…",
+            "Opening Deepak Kalal's creative career folder…",
+            "Analyzing Samay Raina's chess move library…",
+            "Estimating your professor's freelance income sources…",
+            "Asking NASA if your request is astro-urgent…",
+            "Polling Ranveer's followers for motivational reasons…",
+            "Fact-checking a tweet you didn't read…",
+            "Loading KL Rahul's injury status for drama…",
+            "Borrowing a billionaire's calculator to be safe…",
+            "Hacking the Indian Idol vote algorithm (kidding)…",
+            "Double-checking headlines nobody asked for…",
+            "Tracking India vs Pakistan hype cycles…",
+            "Measuring Ananya Panday's coffee intake per hour…",
+            "Refreshing South Delhi Tinder bios for context…",
+            "Buffering Kapil Sharma's comedic pause…",
+            "Asking Delhi traffic for time estimates…",
+            "Verifying budget spreadsheets you will ignore…",
+            "Final sanity check: is this real life or a meme?"
+        ];
+
+        const SLANG_QUIZ_DATA = [
+            { word: 'RIZZ', question: 'What does "RIZZ" mean in Gen-Z slang?', options: ['Charisma or charm','Being angry','A type of dance','Money'], correct:0 },
+            { word: 'GYATT', question: 'What is "GYATT" an expression of?', options:['Surprise or amazement','Sadness','Hunger','Tiredness'], correct:0 },
+            { word: 'SKIBIDI', question: 'What is "SKIBIDI" associated with?', options:['A viral meme/song','A type of food','A dance move','A game'], correct:0 },
+            { word: 'NOCAP', question: 'What does "NO CAP" mean?', options:['No lies/being honest','No hat','Not tired','No money'], correct:0 },
+            { word: 'BASED', question: 'What does "BASED" mean?', options:['Authentic/true to oneself','Located somewhere','Angry','Confused'], correct:0 },
+            { word: 'SIGMA', question: 'What is a "SIGMA" in internet culture?', options:['Independent, self-reliant person','A math symbol','A type of phone','A car brand'], correct:0 },
+            { word: 'SUS', question: 'What does "SUS" mean?', options:['Suspicious','Successful','Surprised','Sleepy'], correct:0 },
+            { word: 'VIBE', question: 'What does "VIBE" refer to?', options:['Mood or feeling','Music volume','Dancing','Texting'], correct:0 }
+        ];
+
+        const ROAST_MESSAGES = [
+            "Congrats — you sacrificed time and dignity for this truth.",
+            "You really did all that... for a day of the week. Respect.",
+            "Your dedication to pointless tasks is genuinely impressive.",
+            "Most people would have given up. You're... special.",
+            "This took longer than it should have. But you knew that.",
+            "Time well wasted! Hope it was worth the journey.",
+            "You could have just counted on a calendar. But where's the fun?",
+            "Your patience level: Unlocked. Your dignity level: Questionable."
+        ];
+
+        // utilities
+        function seededRandom(seed) {
+            const x = Math.sin(seed++) * 10000;
+            return x - Math.floor(x);
+        }
+        function getRandomSeed() {
+            return CONFIG.DETERMINISTIC_SEED || Math.floor(Math.random() * 1000000);
+        }
+        function shuffleArray(array, seed) {
+            const shuffled = [...array];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(seededRandom(seed + i) * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            return shuffled;
+        }
+        function playSound(freq=440, dur=100, type='sine') {
+            if (!audioContext) return;
+            try {
+                const o = audioContext.createOscillator();
+                const g = audioContext.createGain();
+                o.connect(g); g.connect(audioContext.destination);
+                o.frequency.setValueAtTime(freq, audioContext.currentTime);
+                o.type = type;
+                g.gain.setValueAtTime(0.08, audioContext.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + dur/1000);
+                o.start(audioContext.currentTime);
+                o.stop(audioContext.currentTime + dur/1000);
+            } catch(e){ /* ignore */ }
+        }
+
+        // screen utilities
+        function showScreen(id) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            const el = document.getElementById(id);
+            if (el) el.classList.add('active');
+            gameState.currentScreen = id;
+        }
+
+        function showResetOverlay(message) {
+            const overlay = document.createElement('div');
+            overlay.className = 'reset-overlay';
+            overlay.textContent = message;
+            document.body.appendChild(overlay);
+            playSound(200,500,'sawtooth');
+            setTimeout(()=> {
+                document.body.removeChild(overlay);
+                hardReset();
+            }, 1800);
+        }
+
+        function hardReset() {
+            const prevSoundEnabled = !!gameState.soundEnabled;
+            gameState = {
+                inputDays: 0,
+                currentScreen: 'entry',
+                sessionSeed: getRandomSeed(),
+                mazeData: null,
+                playerPos: { x:0, y:0 },
+                quizAttempts: CONFIG.WORD_SEARCH_ATTEMPTS,
+                currentQuiz: null,
+                keyWord: null,
+                wordSearchData: null,
+                selectedCells: [],
+                isSelecting: false,
+                selectionStart: null,
+                soundEnabled: prevSoundEnabled
+            };
+            clearConfetti();
+            clearTimer();
+            document.getElementById('daysInput').value = '';
+            document.getElementById('inputError').textContent = '';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('wordSearchContainer').style.display = 'none';
+            document.getElementById('timerSection').style.display = 'none';
+            document.getElementById('timerSection').innerHTML = '⏳ You CANNOT solve this in <span id="timerCountdown">120</span> seconds!<br>⚡ If you do, you’ll unlock an exciting reward…';
+            showScreen('entryScreen');
+        }
+
+        function resetApp() { hardReset(); }
+
+        function toggleSound() {
+            gameState.soundEnabled = !gameState.soundEnabled;
+            if (gameState.soundEnabled && audioContext && audioContext.state === 'suspended') audioContext.resume();
+            document.querySelector('.sound-toggle').textContent = gameState.soundEnabled ? '🔊' : '🔇';
+        }
+
+        // ENTRY logic
+        function startCalculation() {
+            const input = document.getElementById('daysInput');
+            const errorDiv = document.getElementById('inputError');
+            const days = parseInt(input.value, 10);
+            errorDiv.textContent = '';
+            if (!Number.isFinite(days) || days < 0 || days > 100000) {
+                errorDiv.textContent = 'Please enter a valid number between 0 and 100,000';
+                input.classList.add('shake');
+                setTimeout(()=> input.classList.remove('shake'), 500);
+                return;
+            }
+            gameState.inputDays = days;
+            gameState.sessionSeed = getRandomSeed();
+            showScreen('loadingScreen');
+            startLoading();
+        }
+
+        // Loading
+        function startLoading() {
+            const progressFill = document.getElementById('progressFill');
+            const loadingText = document.getElementById('loadingText');
+            const shuffled = shuffleArray(LOADING_DIALOGUES, gameState.sessionSeed);
+            let index = 0;
+            let progress = 0;
+            const steps = 25;
+            const baseDuration = CONFIG.LOADING_DURATION / steps;
+
+            function step() {
+                if (progress >= 100) {
+                    setTimeout(()=> {
+                        showScreen('mazeScreen');
+                        initializeMaze();
+                    }, 400);
+                    return;
+                }
+                const stepProgress = 100 / steps;
+                const target = Math.min(100, progress + stepProgress);
+                if (index < shuffled.length) { loadingText.textContent = shuffled[index++]; }
+                const start = progress;
+                const duration = baseDuration * (0.8 + seededRandom(gameState.sessionSeed + index)*0.4);
+                const startTime = Date.now();
+                function animate() {
+                    const elapsed = Date.now() - startTime;
+                    const t = Math.min(1, elapsed / duration);
+                    const current = start + (target - start) * t;
+                    progressFill.style.width = current + '%';
+                    if (t < 1) requestAnimationFrame(animate);
+                    else {
+                        progress = target;
+                        setTimeout(step, 500);
+                    }
+                }
+                animate();
+            }
+            step();
+        }
+
+        // Maze (reused from original)
+        function generateMaze(width, height, seed) {
+            const grid = Array.from({length:height},()=>Array.from({length:width},()=>1));
+            const stack = [];
+            const startX = 1, startY = 1;
+            grid[startY][startX] = 0;
+            stack.push({x:startX,y:startY});
+            const directions = [{x:0,y:-2},{x:2,y:0},{x:0,y:2},{x:-2,y:0}];
+            let seedCounter = seed;
+            while(stack.length>0) {
+                const current = stack[stack.length-1];
+                const neighbors = [];
+                for (const dir of directions) {
+                    const nx = current.x + dir.x;
+                    const ny = current.y + dir.y;
+                    if (nx > 0 && nx < width-1 && ny > 0 && ny < height-1 && grid[ny][nx]===1) {
+                        neighbors.push({x:nx,y:ny,wallX: current.x + dir.x/2, wallY: current.y + dir.y/2});
+                    }
+                }
+                if (neighbors.length > 0) {
+                    const randomIndex = Math.floor(seededRandom(seedCounter++) * neighbors.length);
+                    const chosen = neighbors[randomIndex];
+                    grid[chosen.wallY][chosen.wallX] = 0;
+                    grid[chosen.y][chosen.x] = 0;
+                    stack.push({x:chosen.x,y:chosen.y});
+                } else stack.pop();
+            }
+            const exitX = width - 2, exitY = height - 2;
+            grid[exitY][exitX] = 0;
+            return {grid,width,height,start:{x:startX,y:startY},exit:{x:exitX,y:exitY}};
+        }
+
+        function initializeMaze() {
+            const maze = generateMaze(CONFIG.MAZE_SIZE.width, CONFIG.MAZE_SIZE.height, gameState.sessionSeed);
+            gameState.mazeData = maze;
+            gameState.playerPos = { x: maze.start.x, y: maze.start.y };
+            document.addEventListener('keydown', handleMazeKeyPress);
+            drawMaze();
+        }
+
+        function drawMaze() {
+            const canvas = document.getElementById('mazeCanvas');
+            const ctx = canvas.getContext('2d');
+            const maze = gameState.mazeData;
+            if (!maze) return;
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            const cellSize = Math.min(canvas.width / maze.width, canvas.height / maze.height);
+            for (let y=0;y<maze.height;y++){
+                for (let x=0;x<maze.width;x++){
+                    const cx = x*cellSize, cy = y*cellSize;
+                    if (maze.grid[y][x]===1) ctx.fillStyle = 'hsl(220,8.9%,25%)';
+                    else ctx.fillStyle = 'hsl(0,0%,98%)';
+                    ctx.fillRect(cx,cy,cellSize,cellSize);
+                    ctx.strokeStyle = 'hsl(220,13%,91%)';
+                    ctx.lineWidth = 1; ctx.strokeRect(cx,cy,cellSize,cellSize);
+                }
+            }
+            // exit
+            ctx.fillStyle = 'hsl(142,76%,36%)';
+            ctx.fillRect(maze.exit.x * cellSize + 2, maze.exit.y * cellSize + 2, cellSize - 4, cellSize - 4);
+
+            // player (emoji fallback)
+            const px = gameState.playerPos.x * cellSize, py = gameState.playerPos.y * cellSize;
+            ctx.fillStyle = 'hsl(220,70%,50%)';
+            ctx.font = `${Math.max(12, cellSize - 8)}px Arial`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('🚶', px + cellSize/2, py + cellSize/2);
+        }
+
+        function handleMazeKeyPress(e) {
+            if (gameState.currentScreen !== 'mazeScreen') return;
+            let dx=0, dy=0;
+            switch(e.key.toLowerCase()){
+                case 'arrowup': case 'w': dy=-1; break;
+                case 'arrowdown': case 's': dy=1; break;
+                case 'arrowleft': case 'a': dx=-1; break;
+                case 'arrowright': case 'd': dx=1; break;
+                default: return;
+            }
+            e.preventDefault();
+            moveMazePlayer(dx,dy);
+        }
+
+        function moveMazePlayer(dx,dy) {
+            const maze = gameState.mazeData;
+            const nx = gameState.playerPos.x + dx;
+            const ny = gameState.playerPos.y + dy;
+            if (nx < 0 || ny < 0 || nx >= maze.width || ny >= maze.height) return;
+            if (maze.grid[ny][nx]===1){ playSound(150,100); return; }
+            gameState.playerPos.x = nx; gameState.playerPos.y = ny;
+            playSound(300,80);
+            drawMaze();
+            if (nx === maze.exit.x && ny === maze.exit.y) {
+                playSound(500,200);
+                setTimeout(()=> {
+                    showScreen('wordSearchScreen');
+                    initializeWordSearchQuiz();
+                }, 500);
+            }
+        }
+
+        function showMazeHint() {
+            const hintSpan = document.getElementById('hintUsed');
+            hintSpan.textContent = '(Hint used - exit highlighted for 1s)';
+            const canvas = document.getElementById('mazeCanvas');
+            const ctx = canvas.getContext('2d');
+            const maze = gameState.mazeData;
+            const cellSize = Math.min(canvas.width / maze.width, canvas.height / maze.height);
+            ctx.globalAlpha = 0.7;
+            ctx.fillStyle = 'hsl(220,70%,50%)';
+            ctx.fillRect(maze.exit.x * cellSize, maze.exit.y * cellSize, cellSize, cellSize);
+            ctx.globalAlpha = 1;
+            setTimeout(()=> drawMaze(), 1000);
+        }
+
+        // WORD SEARCH QUIZ + TIMER changes
+        let timerInterval = null;
+        let timerTimeLeft = 0;
+        const TIMER_DURATION = 120; // seconds
+
+        function initializeWordSearchQuiz() {
+            gameState.quizAttempts = CONFIG.WORD_SEARCH_ATTEMPTS;
+            const randomIndex = Math.floor(seededRandom(gameState.sessionSeed) * SLANG_QUIZ_DATA.length);
+            gameState.currentQuiz = SLANG_QUIZ_DATA[randomIndex];
+            gameState.keyWord = gameState.currentQuiz.word;
+            document.getElementById('wordSearchContainer').style.display = 'none';
+            document.getElementById('timerSection').style.display = 'none';
+            displayQuiz();
+        }
+
+        function displayQuiz() {
+            const quiz = gameState.currentQuiz;
+            document.getElementById('quizQuestion').textContent = quiz.question;
+            document.getElementById('attemptsCounter').textContent = `Attempts remaining: ${gameState.quizAttempts}`;
+            const optionsDiv = document.getElementById('quizOptions');
+            optionsDiv.innerHTML = '';
+            quiz.options.forEach((opt, idx) => {
+                const btn = document.createElement('div');
+                btn.className = 'quiz-option';
+                btn.textContent = opt;
+                btn.onclick = () => handleQuizAnswer(idx);
+                optionsDiv.appendChild(btn);
+            });
+            document.getElementById('quizMessage').textContent = '';
+        }
+
+        function handleQuizAnswer(selectedIndex) {
+            const quiz = gameState.currentQuiz;
+            const messageDiv = document.getElementById('quizMessage');
+            const options = document.querySelectorAll('.quiz-option');
+            if (selectedIndex === quiz.correct) {
+                options[selectedIndex].classList.add('correct');
+                messageDiv.textContent = `Correct! Now find "${gameState.keyWord}" in the word grid below.`;
+                messageDiv.style.color = 'hsl(142,76%,36%)';
+                setTimeout(()=> {
+                    document.getElementById('wordSearchContainer').style.display = 'block';
+                    document.getElementById('targetWord').textContent = gameState.keyWord;
+                    // show timer
+                    document.getElementById('timerSection').style.display = 'block';
+                    startTimer();
+                    initializeWordSearch();
+                }, 900);
+            } else {
+                options[selectedIndex].classList.add('wrong');
+                gameState.quizAttempts--;
+                if (gameState.quizAttempts <= 0) {
+                    showResetOverlay("No more attempts! Starting from scratch!");
+                } else {
+                    messageDiv.textContent = `Wrong! ${gameState.quizAttempts} attempts remaining.`;
+                    messageDiv.style.color = 'hsl(0,84.2%,60.2%)';
+                    setTimeout(()=> {
+                        options.forEach(o => o.classList.remove('wrong','correct'));
+                        displayQuiz();
+                    }, 900);
+                }
+            }
+        }
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            timerTimeLeft = TIMER_DURATION;
+            const countdownSpan = document.getElementById('timerCountdown');
+            countdownSpan.textContent = timerTimeLeft;
+            timerInterval = setInterval(()=> {
+                timerTimeLeft--;
+                if (countdownSpan) countdownSpan.textContent = timerTimeLeft;
+                if (timerTimeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    document.getElementById('timerSection').innerHTML = "⌛ Time’s up! But keep going… your suffering continues 😈";
+                }
+            }, 1000);
+        }
+
+        function clearTimer() {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            timerTimeLeft = 0;
+        }
+
+        // WORD SEARCH generation & interactions
+        function initializeWordSearch() {
+            const grid = generateWordSearchGrid(CONFIG.WORD_GRID_SIZE, gameState.sessionSeed);
+            gameState.wordSearchData = grid;
+            renderWordSearchGrid();
+            setupWordSelectionListeners();
+        }
+
+        function generateWordSearchGrid(size, seed) {
+            const grid = Array.from({length:size}, ()=> Array.from({length:size}, ()=> ''));
+            const wordsPlaced = [];
+            const keyWord = gameState.keyWord;
+            let placed = false;
+            for (let attempts=0; attempts<200 && !placed; attempts++){
+                const startX = Math.floor(seededRandom(seed + attempts*101) * (size));
+                const startY = Math.floor(seededRandom(seed + attempts*201) * (size));
+                const direction = Math.floor(seededRandom(seed + attempts*301) * 8);
+                if (canPlaceWord(grid, keyWord, startX, startY, direction)) {
+                    placeWord(grid, keyWord, startX, startY, direction);
+                    wordsPlaced.push({word:keyWord, startX, startY, direction, isKey:true});
+                    placed = true;
+                }
+            }
+            // If not placed (rare), put it horizontally starting from (0,0) clipped
+            if (!placed) {
+                const startX = 0, startY = 0, direction = 0;
+                if (canPlaceWord(grid,keyWord,startX,startY,direction)) placeWord(grid,keyWord,startX,startY,direction);
+            }
+            // fill random letters
+            for (let y=0;y<size;y++){
+                for (let x=0;x<size;x++){
+                    if (!grid[y][x] || grid[y][x]==='') {
+                        grid[y][x] = String.fromCharCode(65 + Math.floor(seededRandom(seed + x*1000 + y*2000) * 26));
+                    }
+                }
+            }
+            return { grid, words: wordsPlaced, keyWord, size };
+        }
+
+        function canPlaceWord(grid, word, startX, startY, direction) {
+            const directions = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+            const [dx,dy] = directions[direction];
+            for (let i=0;i<word.length;i++){
+                const x = startX + i*dx, y = startY + i*dy;
+                if (x < 0 || y < 0 || x >= grid[0].length || y >= grid.length) return false;
+                if (grid[y][x] !== '' && grid[y][x] !== word[i]) return false;
+            }
+            return true;
+        }
+
+        function placeWord(grid, word, startX, startY, direction) {
+            const directions = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+            const [dx,dy] = directions[direction];
+            for (let i=0;i<word.length;i++){
+                const x = startX + i*dx, y = startY + i*dy;
+                grid[y][x] = word[i];
+            }
+        }
+
+        function renderWordSearchGrid() {
+            const gridDiv = document.getElementById('wordGrid');
+            const data = gameState.wordSearchData;
+            gridDiv.innerHTML = '';
+            // set grid columns to size
+            gridDiv.style.gridTemplateColumns = `repeat(${data.size}, 20px)`;
+            for (let y=0;y<data.size;y++){
+                for (let x=0;x<data.size;x++){
+                    const cell = document.createElement('div');
+                    cell.className = 'word-cell';
+                    cell.textContent = data.grid[y][x];
+                    cell.dataset.x = x;
+                    cell.dataset.y = y;
+                    gridDiv.appendChild(cell);
+                }
+            }
+        }
+
+        // selection utilities
+        function setupWordSelectionListeners() {
+            const gridContainer = document.getElementById('wordGrid');
+            // remove previous listeners by cloning
+            const clone = gridContainer.cloneNode(true);
+            gridContainer.parentNode.replaceChild(clone, gridContainer);
+            const newGrid = document.getElementById('wordGrid');
+            // add listeners
+            newGrid.addEventListener('mousedown', startWordSelection);
+            newGrid.addEventListener('mousemove', updateWordSelection);
+            document.addEventListener('mouseup', endWordSelection);
+            newGrid.addEventListener('touchstart', startWordSelection, {passive:false});
+            newGrid.addEventListener('touchmove', updateWordSelection, {passive:false});
+            document.addEventListener('touchend', endWordSelection);
+        }
+
+        function getCellFromEvent(event) {
+            if (event.touches && event.touches[0]) {
+                const touch = event.touches[0];
+                const target = document.elementFromPoint(touch.clientX, touch.clientY);
+                if (!target || !target.classList.contains('word-cell')) return null;
+                return { x: parseInt(target.dataset.x,10), y: parseInt(target.dataset.y,10) };
+            } else {
+                const target = event.target;
+                if (!target || !target.classList.contains('word-cell')) return null;
+                return { x: parseInt(target.dataset.x,10), y: parseInt(target.dataset.y,10) };
+            }
+        }
+
+        function startWordSelection(event) {
+            event.preventDefault();
+            const cell = getCellFromEvent(event);
+            if (!cell) return;
+            gameState.isSelecting = true;
+            gameState.selectionStart = cell;
+            gameState.selectedCells = [cell];
+            updateSelectionVisual();
+        }
+
+        function updateWordSelection(event) {
+            if (!gameState.isSelecting) return;
+            event.preventDefault();
+            const cell = getCellFromEvent(event);
+            if (!cell) return;
+            const path = calculateSelectionPath(gameState.selectionStart, cell);
+            gameState.selectedCells = path;
+            updateSelectionVisual();
+        }
+
+        function endWordSelection(event) {
+            if (!gameState.isSelecting) return;
+            event.preventDefault();
+            gameState.isSelecting = false;
+            const selectedWord = getSelectedWord();
+            checkSelectedWord(selectedWord);
+        }
+
+        function calculateSelectionPath(start, end) {
+            if (!start || !end) return [start];
+            const dx = end.x - start.x, dy = end.y - start.y;
+            const steps = Math.max(Math.abs(dx), Math.abs(dy));
+            if (steps === 0) return [start];
+            const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
+            const stepY = dy === 0 ? 0 : dy / Math.abs(dy);
+            // only allow straight lines and diagonals
+            if (Math.abs(dx) !== Math.abs(dy) && dx !== 0 && dy !== 0) {
+                return [start]; // invalid
+            }
+            const path = [];
+            for (let i=0;i<=steps;i++){
+                path.push({ x: start.x + Math.round(i * stepX), y: start.y + Math.round(i * stepY) });
+            }
+            return path;
+        }
+
+        function updateSelectionVisual() {
+            document.querySelectorAll('.word-cell').forEach(c => c.classList.remove('selected'));
+            gameState.selectedCells.forEach(pos => {
+                const cell = document.querySelector(`[data-x="${pos.x}"][data-y="${pos.y}"]`);
+                if (cell) cell.classList.add('selected');
+            });
+        }
+
+        function getSelectedWord() {
+            return gameState.selectedCells.map(pos => {
+                if (!pos) return '';
+                if (!gameState.wordSearchData || !gameState.wordSearchData.grid[pos.y]) return '';
+                return gameState.wordSearchData.grid[pos.y][pos.x] || '';
+            }).join('');
+        }
+
+        function checkSelectedWord(selectedWord) {
+            const messageDiv = document.getElementById('wordMessage');
+            if (selectedWord === gameState.keyWord) {
+                messageDiv.textContent = `Perfect! You found "${gameState.keyWord}"!`;
+                messageDiv.style.color = 'hsl(142,76%,36%)';
+                // mark found
+                gameState.selectedCells.forEach(pos => {
+                    const cell = document.querySelector(`[data-x="${pos.x}"][data-y="${pos.y}"]`);
+                    if (cell) cell.classList.add('found');
+                });
+                playSound(500,300);
+                // reward if timer still running
+                const gotReward = timerInterval && timerTimeLeft > 0;
+                if (gotReward) {
+                    showReward();
+                }
+                // continue to next after short delay
+                setTimeout(()=> {
+                    clearTimer();
+                    showScreen('checkboxScreen');
+                    initializeCheckboxGarden();
+                }, 900);
+            } else {
+                // fatal mistake
+                showResetOverlay("Wrong word selected! Starting from scratch!");
+            }
+        }
+
+        // Checkbox garden (reduced count)
+        function initializeCheckboxGarden() {
+            const correctIndex = Math.floor(seededRandom(gameState.sessionSeed + 1000) * CONFIG.CHECKBOX_COUNT);
+            const clues = [
+                "The checkbox that matches your energy is hiding in the top-right corner of chaos",
+                "Look for the checkbox that vibes in the bottom-left realm of confusion",
+                "Your destiny checkbox lurks somewhere in the middle of this madness",
+                "The chosen one checkbox is vibing in the top-left quadrant of despair",
+                "Find the checkbox that's chilling in the bottom-right corner of hope"
+            ];
+            const clue = clues[Math.floor(seededRandom(gameState.sessionSeed + 2000) * clues.length)];
+            document.getElementById('clueText').textContent = clue;
+
+            const gridDiv = document.getElementById('checkboxGrid');
+            gridDiv.innerHTML = '';
+            for (let i=0;i<CONFIG.CHECKBOX_COUNT;i++){
+                const box = document.createElement('div');
+                box.className = 'checkbox-item';
+                box.onclick = ()=> handleCheckboxClick(i, correctIndex);
+                gridDiv.appendChild(box);
+            }
+            gameState.checkboxData = { correctIndex };
+        }
+
+        function handleCheckboxClick(i, correctIndex) {
+            if (i === correctIndex) {
+                playSound(600, 400);
+                setTimeout(()=> {
+                    showScreen('revealScreen');
+                    showResult();
+                }, 400);
+            } else {
+                showResetOverlay("Wrong checkbox! Starting from scratch!");
+            }
+        }
+
+        // Reveal final result
+        function showResult() {
+            document.getElementById('inputDays').textContent = gameState.inputDays;
+            const today = new Date();
+            const futureDate = new Date(today.getTime() + (gameState.inputDays * 24 * 60 * 60 * 1000));
+            const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+            const dayName = dayNames[futureDate.getDay()];
+            document.getElementById('resultDay').textContent = dayName;
+            const roast = ROAST_MESSAGES[Math.floor(seededRandom(gameState.sessionSeed + 5000) * ROAST_MESSAGES.length)];
+            document.getElementById('roastMessage').textContent = roast;
+        }
+
+        // Reward confetti
+        function showReward() {
+            const container = document.getElementById('confettiContainer');
+            container.innerHTML = '';
+            container.style.display = 'block';
+            const colors = ['#ff4d4f','#ffa940','#73d13d','#40a9ff','#9254de'];
+            for (let i=0;i<60;i++){
+                const el = document.createElement('div');
+                el.className = 'confetti';
+                el.style.background = colors[i % colors.length];
+                el.style.left = (Math.random()*100) + 'vw';
+                el.style.top = (-10 - Math.random()*20) + 'vh';
+                el.style.transform = `rotate(${Math.random()*360}deg)`;
+                el.style.opacity = 0.95;
+                el.style.animationDelay = (Math.random()*0.5)+'s';
+                el.style.width = (6 + Math.random()*10)+'px';
+                el.style.height = (8 + Math.random()*12)+'px';
+                el.style.borderRadius = (Math.random()>0.5? '2px':'50%');
+                el.style.zIndex = 3000;
+                container.appendChild(el);
+            }
+            // show a quick reward message
+            const rewardBanner = document.createElement('div');
+            rewardBanner.style.position = 'fixed';
+            rewardBanner.style.left = '50%';
+            rewardBanner.style.top = '10%';
+            rewardBanner.style.transform = 'translateX(-50%)';
+            rewardBanner.style.background = 'linear-gradient(90deg,#ffd666,#ffd6e7)';
+            rewardBanner.style.padding = '12px 20px';
+            rewardBanner.style.borderRadius = '12px';
+            rewardBanner.style.boxShadow = '0 6px 20px rgba(0,0,0,0.12)';
+            rewardBanner.style.fontWeight = '700';
+            rewardBanner.style.zIndex = 4000;
+            rewardBanner.textContent = '🎁 Reward unlocked! Nice hustle — carry the brag home!';
+            document.body.appendChild(rewardBanner);
+            setTimeout(()=> {
+                rewardBanner.remove();
+            }, 2600);
+            // clear confetti after animation time
+            setTimeout(clearConfetti, 3200);
+        }
+        function clearConfetti() {
+            const container = document.getElementById('confettiContainer');
+            container.innerHTML = '';
+            container.style.display = 'none';
+        }
+
+        // Init
+        document.addEventListener('DOMContentLoaded', ()=> {
+            gameState.sessionSeed = getRandomSeed();
+            document.addEventListener('click', ()=> {
+                if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+            }, { once: true });
+        });
+
+        // expose reset function to button
+        window.resetApp = resetApp;
+    </script>
+</body>
+</html>
