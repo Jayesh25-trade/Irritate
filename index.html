@@ -101,9 +101,18 @@
 
         /* Checkbox Garden */
         .checkbox-garden { width:100%; height:60vh; overflow:auto; border:3px solid hsl(var(--border)); border-radius:var(--radius); padding:20px; background: rgba(230,230,230,0.2); }
-        .checkbox-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap:5px; }
+        .checkbox-grid { display:grid; grid-template-columns: repeat(20, 1fr); gap:5px; } /* fixed 20 columns for consistent mapping */
 
-        .checkbox-item { width:25px; height:25px; border-radius:3px; border:2px solid hsl(var(--border)); background: hsl(0 0% 100%); cursor:pointer; }
+        .checkbox-item { width:100%; padding-top:100%; position:relative; border-radius:3px; border:2px solid hsl(var(--border)); background: hsl(0 0% 100%); cursor:pointer; overflow:hidden; }
+        .checkbox-item > .inner {
+            position:absolute; inset:0; display:block;
+        }
+
+        /* flash colors for proximity */
+        .flash-red { background: #ff4d4f !important; }
+        .flash-orange { background: #ffa940 !important; }
+        .flash-yellow { background: #ffec3d !important; }
+        .correct { background: #52c41a !important; }
 
         /* Reveal */
         .reveal-container { text-align:center; padding:2rem; background: hsl(var(--muted)); border-radius:var(--radius); margin:2rem 0; }
@@ -128,12 +137,45 @@
             100% { transform: translateY(110vh) rotate(720deg); opacity:0.9; }
         }
 
+        /* Scare overlay */
+        #scareOverlay {
+            position: fixed;
+            inset: 0;
+            display: none;
+            z-index: 5000;
+            background: black;
+            align-items: center;
+            justify-content: center;
+        }
+        #scareOverlay .controls {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            z-index: 5010;
+        }
+        #scareOverlay button {
+            background: rgba(255,255,255,0.12);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            backdrop-filter: blur(4px);
+        }
+        #scareVideo {
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+            margin: 0 auto;
+        }
+
         /* Utility */
         .fade-in { animation: fadeIn 0.4s ease-in; }
         @keyframes fadeIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform:translateY(0); } }
 
         @media (max-width:768px) {
             .word-cell { width:15px; height:15px; font-size:10px; }
+            .checkbox-grid { grid-template-columns: repeat(12, 1fr); }
         }
     </style>
 </head>
@@ -202,7 +244,7 @@
             </div>
 
             <div class="word-search-container" id="wordSearchContainer" style="display:none;">
-                <div id="wordGrid" class="word-grid"></div>
+                <div id="wordGrid" class="word-grid" aria-label="Word search grid"></div>
                 <div class="word-search-info">
                     <h4>Instructions:</h4>
                     <p>• Drag to select the word: <strong id="targetWord"></strong></p>
@@ -216,14 +258,20 @@
         <!-- Checkbox Garden -->
         <div id="checkboxScreen" class="screen">
             <h2>Stage 3: Find the Chosen One</h2>
-            <p style="margin:1rem 0; color: hsl(var(--muted-foreground));">One checkbox among hundreds is the correct one. Choose wisely - wrong choices reset everything!</p>
+            <p style="margin:1rem 0; color: hsl(var(--muted-foreground));">One checkbox among many is the correct one. You have <strong id="checkboxAttemptsDisplay">5</strong> attempts and <strong id="hintsLeftDisplay">5</strong> hints.</p>
 
             <div id="checkboxClue" style="background: hsl(var(--muted)); padding:1rem; border-radius:var(--radius); margin:1rem 0;">
-                <strong>Cryptic Clue:</strong> <span id="clueText"></span>
+                <strong>Hint:</strong> <span id="clueText"></span>
+                <div style="margin-top:0.5rem;">
+                    <button id="useHintBtn" class="btn">Use Hint</button>
+                </div>
             </div>
 
             <div class="checkbox-garden">
                 <div id="checkboxGrid" class="checkbox-grid"></div>
+            </div>
+            <div style="margin-top:0.8rem; font-weight:bold;">
+                <span id="checkboxStatus"></span>
             </div>
         </div>
 
@@ -239,6 +287,14 @@
         </div>
     </div>
 
+    <!-- Scare overlay -->
+    <div id="scareOverlay" aria-hidden="true">
+        <div class="controls">
+            <button id="skipScareBtn">Skip</button>
+        </div>
+        <video id="scareVideo" src="./assets/scare.mp4" playsinline></video>
+    </div>
+
     <!-- Confetti container -->
     <div id="confettiContainer" class="confetti-container" style="display:none;"></div>
 
@@ -247,11 +303,16 @@
         const CONFIG = {
             LOADING_DURATION: 60000, // 60 seconds
             MAZE_SIZE: { width: 21, height: 15 },
-            WORD_GRID_SIZE: 20,      // reduced to 20 (was 200)
-            CHECKBOX_COUNT: 400,     // reduced for practicality
+            WORD_GRID_SIZE: 20,
+            CHECKBOX_COUNT: 400,
+            CHECKBOX_COLUMNS: 20, // mapping columns to rows/cols
             DETERMINISTIC_SEED: null,
             SOUND_ENABLED: true,
-            WORD_SEARCH_ATTEMPTS: 3
+            WORD_SEARCH_ATTEMPTS: 3,
+            CHECKBOX_ATTEMPTS: 5,
+            CHECKBOX_HINTS: 5,
+            SCARE_DELAY_MS: 7000,
+            TIMER_DURATION: 120
         };
 
         // STATE
@@ -261,19 +322,26 @@
             sessionSeed: null,
             mazeData: null,
             playerPos: { x:0, y:0 },
-            quizAttempts: 3,
+            quizAttempts: CONFIG.WORD_SEARCH_ATTEMPTS,
             currentQuiz: null,
             keyWord: null,
             wordSearchData: null,
             selectedCells: [],
             isSelecting: false,
-            selectionStart: null
+            selectionStart: null,
+            scareTimerId: null,
+            scareActive: false,
+            timerInterval: null,
+            timerTimeLeft: 0,
+            checkboxAttempts: CONFIG.CHECKBOX_ATTEMPTS,
+            hintsRemaining: CONFIG.CHECKBOX_HINTS,
+            correctCheckboxIndex: null
         };
 
-        // audio
+        // audio context
         const audioContext = typeof AudioContext !== 'undefined' ? new AudioContext() : null;
 
-        // LOADING DIALOGUES (25)
+        // LOADING DIALOGUES
         const LOADING_DIALOGUES = [
             "Analyzing Arpit Bala's top-tier cringe archive…",
             "Cross-checking Jethalal's electrical warranty receipts…",
@@ -302,6 +370,7 @@
             "Final sanity check: is this real life or a meme?"
         ];
 
+        // SLANG QUIZ DATA
         const SLANG_QUIZ_DATA = [
             { word: 'RIZZ', question: 'What does "RIZZ" mean in Gen-Z slang?', options: ['Charisma or charm','Being angry','A type of dance','Money'], correct:0 },
             { word: 'GYATT', question: 'What is "GYATT" an expression of?', options:['Surprise or amazement','Sadness','Hunger','Tiredness'], correct:0 },
@@ -324,7 +393,7 @@
             "Your patience level: Unlocked. Your dignity level: Questionable."
         ];
 
-        // utilities
+        // Utilities
         function seededRandom(seed) {
             const x = Math.sin(seed++) * 10000;
             return x - Math.floor(x);
@@ -355,7 +424,7 @@
             } catch(e){ /* ignore */ }
         }
 
-        // screen utilities
+        // Screen nav
         function showScreen(id) {
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             const el = document.getElementById(id);
@@ -376,7 +445,7 @@
         }
 
         function hardReset() {
-            const prevSoundEnabled = !!gameState.soundEnabled;
+            const prevSound = !!gameState.soundEnabled;
             gameState = {
                 inputDays: 0,
                 currentScreen: 'entry',
@@ -390,7 +459,14 @@
                 selectedCells: [],
                 isSelecting: false,
                 selectionStart: null,
-                soundEnabled: prevSoundEnabled
+                scareTimerId: null,
+                scareActive: false,
+                timerInterval: null,
+                timerTimeLeft: 0,
+                checkboxAttempts: CONFIG.CHECKBOX_ATTEMPTS,
+                hintsRemaining: CONFIG.CHECKBOX_HINTS,
+                correctCheckboxIndex: null,
+                soundEnabled: prevSound
             };
             clearConfetti();
             clearTimer();
@@ -469,7 +545,7 @@
             step();
         }
 
-        // Maze (reused from original)
+        // Maze
         function generateMaze(width, height, seed) {
             const grid = Array.from({length:height},()=>Array.from({length:width},()=>1));
             const stack = [];
@@ -584,11 +660,7 @@
             setTimeout(()=> drawMaze(), 1000);
         }
 
-        // WORD SEARCH QUIZ + TIMER changes
-        let timerInterval = null;
-        let timerTimeLeft = 0;
-        const TIMER_DURATION = 120; // seconds
-
+        // WORD SEARCH QUIZ + TIMER + SCARE
         function initializeWordSearchQuiz() {
             gameState.quizAttempts = CONFIG.WORD_SEARCH_ATTEMPTS;
             const randomIndex = Math.floor(seededRandom(gameState.sessionSeed) * SLANG_QUIZ_DATA.length);
@@ -630,6 +702,7 @@
                     document.getElementById('timerSection').style.display = 'block';
                     startTimer();
                     initializeWordSearch();
+                    scheduleScare();
                 }, 900);
             } else {
                 options[selectedIndex].classList.add('wrong');
@@ -647,28 +720,80 @@
             }
         }
 
+        // Timer functions
         function startTimer() {
-            clearInterval(timerInterval);
-            timerTimeLeft = TIMER_DURATION;
+            clearTimer();
+            gameState.timerTimeLeft = CONFIG.TIMER_DURATION;
             const countdownSpan = document.getElementById('timerCountdown');
-            countdownSpan.textContent = timerTimeLeft;
-            timerInterval = setInterval(()=> {
-                timerTimeLeft--;
-                if (countdownSpan) countdownSpan.textContent = timerTimeLeft;
-                if (timerTimeLeft <= 0) {
-                    clearInterval(timerInterval);
+            countdownSpan.textContent = gameState.timerTimeLeft;
+            gameState.timerInterval = setInterval(()=> {
+                gameState.timerTimeLeft--;
+                if (countdownSpan) countdownSpan.textContent = gameState.timerTimeLeft;
+                if (gameState.timerTimeLeft <= 0) {
+                    clearTimer();
                     document.getElementById('timerSection').innerHTML = "⌛ Time’s up! But keep going… your suffering continues 😈";
                 }
             }, 1000);
         }
 
         function clearTimer() {
-            clearInterval(timerInterval);
-            timerInterval = null;
-            timerTimeLeft = 0;
+            if (gameState.timerInterval) clearInterval(gameState.timerInterval);
+            gameState.timerInterval = null;
+            gameState.timerTimeLeft = 0;
         }
 
-        // WORD SEARCH generation & interactions
+        // SCARE overlay logic
+        function scheduleScare() {
+            // Cancel previous if any
+            if (gameState.scareTimerId) {
+                clearTimeout(gameState.scareTimerId);
+                gameState.scareTimerId = null;
+            }
+            // only schedule if not shown yet in this session
+            if (!gameState.scareShown) {
+                gameState.scareTimerId = setTimeout(() => {
+                    showScareOverlay();
+                }, CONFIG.SCARE_DELAY_MS);
+            }
+        }
+
+        function showScareOverlay() {
+            // Prevent interactions while scare is active
+            gameState.scareActive = true;
+            const overlay = document.getElementById('scareOverlay');
+            const video = document.getElementById('scareVideo');
+            overlay.style.display = 'flex';
+            overlay.setAttribute('aria-hidden', 'false');
+            // try to autoplay with sound; if blocked, play muted and show skip
+            video.currentTime = 0;
+            video.muted = false;
+            const playPromise = video.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(() => {
+                    // Autoplay with sound blocked — mute then play
+                    video.muted = true;
+                    video.play().catch(()=>{});
+                });
+            }
+            // When video ends or skip => hide overlay
+            video.onended = hideScareOverlay;
+            document.getElementById('skipScareBtn').onclick = hideScareOverlay;
+        }
+
+        function hideScareOverlay() {
+            const overlay = document.getElementById('scareOverlay');
+            const video = document.getElementById('scareVideo');
+            overlay.style.display = 'none';
+            overlay.setAttribute('aria-hidden', 'true');
+            video.pause();
+            video.currentTime = 0;
+            gameState.scareActive = false;
+            gameState.scareShown = true;
+            // clear scheduled timer id
+            if (gameState.scareTimerId) { clearTimeout(gameState.scareTimerId); gameState.scareTimerId = null; }
+        }
+
+        // WORD SEARCH generation & selection
         function initializeWordSearch() {
             const grid = generateWordSearchGrid(CONFIG.WORD_GRID_SIZE, gameState.sessionSeed);
             gameState.wordSearchData = grid;
@@ -691,12 +816,10 @@
                     placed = true;
                 }
             }
-            // If not placed (rare), put it horizontally starting from (0,0) clipped
             if (!placed) {
                 const startX = 0, startY = 0, direction = 0;
                 if (canPlaceWord(grid,keyWord,startX,startY,direction)) placeWord(grid,keyWord,startX,startY,direction);
             }
-            // fill random letters
             for (let y=0;y<size;y++){
                 for (let x=0;x<size;x++){
                     if (!grid[y][x] || grid[y][x]==='') {
@@ -731,7 +854,6 @@
             const gridDiv = document.getElementById('wordGrid');
             const data = gameState.wordSearchData;
             gridDiv.innerHTML = '';
-            // set grid columns to size
             gridDiv.style.gridTemplateColumns = `repeat(${data.size}, 20px)`;
             for (let y=0;y<data.size;y++){
                 for (let x=0;x<data.size;x++){
@@ -745,14 +867,12 @@
             }
         }
 
-        // selection utilities
+        // selection listeners
         function setupWordSelectionListeners() {
             const gridContainer = document.getElementById('wordGrid');
-            // remove previous listeners by cloning
-            const clone = gridContainer.cloneNode(true);
-            gridContainer.parentNode.replaceChild(clone, gridContainer);
-            const newGrid = document.getElementById('wordGrid');
-            // add listeners
+            // replace container to remove old handlers
+            const newGrid = gridContainer.cloneNode(true);
+            gridContainer.parentNode.replaceChild(newGrid, gridContainer);
             newGrid.addEventListener('mousedown', startWordSelection);
             newGrid.addEventListener('mousemove', updateWordSelection);
             document.addEventListener('mouseup', endWordSelection);
@@ -762,6 +882,7 @@
         }
 
         function getCellFromEvent(event) {
+            if (gameState.scareActive) return null; // disable during scare
             if (event.touches && event.touches[0]) {
                 const touch = event.touches[0];
                 const target = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -775,6 +896,8 @@
         }
 
         function startWordSelection(event) {
+            // If scare active, ignore
+            if (gameState.scareActive) return;
             event.preventDefault();
             const cell = getCellFromEvent(event);
             if (!cell) return;
@@ -786,6 +909,7 @@
 
         function updateWordSelection(event) {
             if (!gameState.isSelecting) return;
+            if (gameState.scareActive) return;
             event.preventDefault();
             const cell = getCellFromEvent(event);
             if (!cell) return;
@@ -796,6 +920,7 @@
 
         function endWordSelection(event) {
             if (!gameState.isSelecting) return;
+            if (gameState.scareActive) return;
             event.preventDefault();
             gameState.isSelecting = false;
             const selectedWord = getSelectedWord();
@@ -848,55 +973,162 @@
                 });
                 playSound(500,300);
                 // reward if timer still running
-                const gotReward = timerInterval && timerTimeLeft > 0;
+                const gotReward = (gameState.timerInterval || gameState.timerTimeLeft > 0) && gameState.timerTimeLeft > 0;
                 if (gotReward) {
                     showReward();
                 }
-                // continue to next after short delay
+                // stop scheduled scare if not yet shown
+                if (gameState.scareTimerId) { clearTimeout(gameState.scareTimerId); gameState.scareTimerId = null; }
                 setTimeout(()=> {
                     clearTimer();
                     showScreen('checkboxScreen');
                     initializeCheckboxGarden();
                 }, 900);
             } else {
-                // fatal mistake
-                showResetOverlay("Wrong word selected! Starting from scratch!");
+                // wrong selection -> decrement attempts and fatal if none left
+                gameState.quizAttempts--;
+                if (gameState.quizAttempts <= 0) {
+                    showResetOverlay("Wrong selection and no attempts left. Starting from scratch!");
+                } else {
+                    messageDiv.textContent = `Wrong selection. ${gameState.quizAttempts} attempts remaining.`;
+                    messageDiv.style.color = 'hsl(0,84.2%,60.2%)';
+                    // reset selection highlight after short delay
+                    setTimeout(()=> {
+                        document.querySelectorAll('.word-cell').forEach(c => c.classList.remove('selected'));
+                    }, 600);
+                }
             }
         }
 
-        // Checkbox garden (reduced count)
+        // Checkbox garden (with 5 attempts and hints and proximity)
         function initializeCheckboxGarden() {
-            const correctIndex = Math.floor(seededRandom(gameState.sessionSeed + 1000) * CONFIG.CHECKBOX_COUNT);
-            const clues = [
-                "The checkbox that matches your energy is hiding in the top-right corner of chaos",
-                "Look for the checkbox that vibes in the bottom-left realm of confusion",
-                "Your destiny checkbox lurks somewhere in the middle of this madness",
-                "The chosen one checkbox is vibing in the top-left quadrant of despair",
-                "Find the checkbox that's chilling in the bottom-right corner of hope"
-            ];
-            const clue = clues[Math.floor(seededRandom(gameState.sessionSeed + 2000) * clues.length)];
-            document.getElementById('clueText').textContent = clue;
-
+            // determine correct index deterministically from session seed
+            gameState.correctCheckboxIndex = Math.floor(seededRandom(gameState.sessionSeed + 1000) * CONFIG.CHECKBOX_COUNT);
+            gameState.checkboxAttempts = CONFIG.CHECKBOX_ATTEMPTS;
+            gameState.hintsRemaining = CONFIG.CHECKBOX_HINTS;
+            document.getElementById('checkboxAttemptsDisplay').textContent = gameState.checkboxAttempts;
+            document.getElementById('hintsLeftDisplay').textContent = gameState.hintsRemaining;
+            document.getElementById('clueText').textContent = 'Use hints to gradually narrow down the area.';
+            document.getElementById('checkboxStatus').textContent = '';
+            // render grid
             const gridDiv = document.getElementById('checkboxGrid');
             gridDiv.innerHTML = '';
+            const cols = CONFIG.CHECKBOX_COLUMNS;
+            // set columns style (already in CSS but ensure dynamic)
+            gridDiv.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
             for (let i=0;i<CONFIG.CHECKBOX_COUNT;i++){
-                const box = document.createElement('div');
-                box.className = 'checkbox-item';
-                box.onclick = ()=> handleCheckboxClick(i, correctIndex);
-                gridDiv.appendChild(box);
+                const wrapper = document.createElement('div');
+                wrapper.className = 'checkbox-item';
+                const inner = document.createElement('div');
+                inner.className = 'inner';
+                wrapper.appendChild(inner);
+                // click handler
+                wrapper.addEventListener('click', () => handleCheckboxClick(i, wrapper));
+                gridDiv.appendChild(wrapper);
             }
-            gameState.checkboxData = { correctIndex };
+            // hook hint button
+            const hintBtn = document.getElementById('useHintBtn');
+            hintBtn.disabled = false;
+            hintBtn.onclick = useHint;
         }
 
-        function handleCheckboxClick(i, correctIndex) {
-            if (i === correctIndex) {
-                playSound(600, 400);
+        function handleCheckboxClick(i, element) {
+            // if already correct marked, ignore
+            if (element.classList.contains('correct')) return;
+            // compute row,col
+            const cols = CONFIG.CHECKBOX_COLUMNS;
+            const correct = gameState.correctCheckboxIndex;
+            const correctRow = Math.floor(correct / cols);
+            const correctCol = correct % cols;
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            // Euclidean distance (in grid units)
+            const dist = Math.hypot(row - correctRow, col - correctCol);
+            // thresholds (tweakable)
+            const maxDist = Math.hypot(Math.ceil(CONFIG.CHECKBOX_COUNT/cols), cols);
+            // decide proximity category
+            let category;
+            if (dist === 0) category = 'correct';
+            else if (dist <= 2) category = 'very-close';
+            else if (dist <= 5) category = 'close';
+            else if (dist <= 10) category = 'near';
+            else category = 'far';
+            // visual feedback
+            if (category === 'correct') {
+                element.classList.add('correct');
+                playSound(700,400);
+                document.getElementById('checkboxStatus').textContent = 'Correct — you found the chosen checkbox!';
+                // proceed to result
                 setTimeout(()=> {
                     showScreen('revealScreen');
                     showResult();
-                }, 400);
+                }, 700);
+                return;
+            } else if (category === 'very-close' || category === 'close') {
+                flashProximity(element, 'flash-yellow');
+            } else if (category === 'near') {
+                flashProximity(element, 'flash-orange');
             } else {
-                showResetOverlay("Wrong checkbox! Starting from scratch!");
+                flashProximity(element, 'flash-red');
+            }
+            // decrement attempts
+            gameState.checkboxAttempts--;
+            document.getElementById('checkboxAttemptsDisplay').textContent = gameState.checkboxAttempts;
+            document.getElementById('checkboxStatus').textContent = `Wrong pick — ${gameState.checkboxAttempts} attempts remaining.`;
+            // if out of attempts -> reset
+            if (gameState.checkboxAttempts <= 0) {
+                setTimeout(()=> showResetOverlay("Out of checkbox attempts. Starting over."), 800);
+            }
+        }
+
+        function flashProximity(el, cls) {
+            el.classList.add(cls);
+            setTimeout(()=> el.classList.remove(cls), 500);
+        }
+
+        // Hints: progressive 5 hints narrowing down
+        function useHint() {
+            if (gameState.hintsRemaining <= 0) return;
+            gameState.hintsRemaining--;
+            document.getElementById('hintsLeftDisplay').textContent = gameState.hintsRemaining;
+            const hintLevel = CONFIG.CHECKBOX_HINTS - gameState.hintsRemaining; // 1..5
+            const idx = gameState.correctCheckboxIndex;
+            const cols = CONFIG.CHECKBOX_COLUMNS;
+            const rows = Math.ceil(CONFIG.CHECKBOX_COUNT / cols);
+            const r = Math.floor(idx / cols);
+            const c = idx % cols;
+            let hintText = '';
+            if (hintLevel === 1) {
+                // quadrant
+                const vertical = r < rows/2 ? 'top' : 'bottom';
+                const horizontal = c < cols/2 ? 'left' : 'right';
+                hintText = `Quadrant: ${vertical}-${horizontal} area.`;
+            } else if (hintLevel === 2) {
+                // half
+                const vertical = r < rows/2 ? 'top half' : 'bottom half';
+                hintText = `Rough area: ${vertical}.`;
+            } else if (hintLevel === 3) {
+                // row-range
+                const range = 2 + Math.floor(rows/5);
+                const startRow = Math.max(0, r - range);
+                const endRow = Math.min(rows-1, r + range);
+                hintText = `Row range: rows ${startRow} to ${endRow} (0-indexed).`;
+            } else if (hintLevel === 4) {
+                // col-range
+                const range = 2 + Math.floor(cols/8);
+                const startCol = Math.max(0, c - range);
+                const endCol = Math.min(cols-1, c + range);
+                hintText = `Column range: columns ${startCol} to ${endCol} (0-indexed).`;
+            } else {
+                // precise-ish band
+                const start = Math.max(0, idx - 3);
+                const end = Math.min(CONFIG.CHECKBOX_COUNT - 1, idx + 3);
+                hintText = `Narrow band around index ${idx}. Look between indexes ${start} and ${end}.`;
+            }
+            document.getElementById('clueText').textContent = hintText;
+            // disable hint button when none left
+            if (gameState.hintsRemaining <= 0) {
+                document.getElementById('useHintBtn').disabled = true;
             }
         }
 
@@ -910,6 +1142,8 @@
             document.getElementById('resultDay').textContent = dayName;
             const roast = ROAST_MESSAGES[Math.floor(seededRandom(gameState.sessionSeed + 5000) * ROAST_MESSAGES.length)];
             document.getElementById('roastMessage').textContent = roast;
+            // optional confetti on reveal (if desired)
+            showReward();
         }
 
         // Reward confetti
@@ -933,7 +1167,6 @@
                 el.style.zIndex = 3000;
                 container.appendChild(el);
             }
-            // show a quick reward message
             const rewardBanner = document.createElement('div');
             rewardBanner.style.position = 'fixed';
             rewardBanner.style.left = '50%';
@@ -947,10 +1180,7 @@
             rewardBanner.style.zIndex = 4000;
             rewardBanner.textContent = '🎁 Reward unlocked! Nice hustle — carry the brag home!';
             document.body.appendChild(rewardBanner);
-            setTimeout(()=> {
-                rewardBanner.remove();
-            }, 2600);
-            // clear confetti after animation time
+            setTimeout(()=> rewardBanner.remove(), 2600);
             setTimeout(clearConfetti, 3200);
         }
         function clearConfetti() {
@@ -965,9 +1195,13 @@
             document.addEventListener('click', ()=> {
                 if (audioContext && audioContext.state === 'suspended') audioContext.resume();
             }, { once: true });
+            // wire skip button (already wired on show)
+            document.getElementById('skipScareBtn').addEventListener('click', () => {
+                hideScareOverlay();
+            });
         });
 
-        // expose reset function to button
+        // Expose reset
         window.resetApp = resetApp;
     </script>
 </body>
